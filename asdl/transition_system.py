@@ -144,5 +144,8 @@ class TransitionSystem(object):
         elif lang == 'wikisql':
             from .lang.sql.sql_transition_system import SqlTransitionSystem
             return SqlTransitionSystem
+        elif lang == 'regex':
+            from .lang.regex.regex_transition_system import RegexTransitionSystem
+            return RegexTransitionSystem
 
         raise ValueError('unknown language %s' % lang)

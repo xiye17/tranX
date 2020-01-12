@@ -107,19 +107,24 @@ class AbstractSyntaxTree(object):
 
     def __eq__(self, other):
         if not isinstance(other, self.__class__):
+            # print("False class", self, other, self.__class__, other.__class__)
             return False
 
         if self.created_time != other.created_time:
+            # print("False time", self, other, self.created_time, other.created_time)
             return False
 
         if self.production != other.production:
+            # print("False prod", self, other, self.production, other.production)
             return False
 
         if len(self.fields) != len(other.fields):
+            # print("False fields", self, other, len(self.fields), len(other.fields))
             return False
 
         for i in range(len(self.fields)):
-            if self.fields[i] != other.fields[i]: return False
+            if self.fields[i] != other.fields[i]:
+                return False
 
         return True
 
