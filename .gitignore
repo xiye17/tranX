@@ -105,7 +105,8 @@ ENV/
 *.swp
 
 # data downloaded automatically using pull_data.sh
-data/
+data/*
+!data/regex
 
 # saved model files
 saved_models/
