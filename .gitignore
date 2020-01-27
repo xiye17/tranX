@@ -107,6 +107,7 @@ ENV/
 # data downloaded automatically using pull_data.sh
 data/*
 !data/regex
+!data/streg
 
 # saved model files
 saved_models/

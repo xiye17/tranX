@@ -1,5 +1,5 @@
 # coding=utf-8
-from .regex_utils import * 
+from .streg_utils import * 
 import ast
 
 from asdl.transition_system import TransitionSystem, GenTokenAction
@@ -24,83 +24,117 @@ regex = Not(regex arg)
     | EndWith(regex arg)
     | Contain(regex arg)
     | RepAtleast(regex arg, int k)
+    | RepeatAtleast(regex arg, int k)
+    | RepeatRange(reg arg, int k1, int k2)
     | CharClass(cc arg)
-    | Const(tok arg)
+    | Token(tok arg) #  <x> single tokn
+    | ConstSym(csymbl arg) # const0 const1
+    | String(str arg)  # string const(<str>)
 """
 
 _NODE_CLASS_TO_RULE = {
     "not": "Not",
+    "notcc": "NotCC",
     "star": "Star",
+    "optional": "Optional",
     "startwith": "StartWith",
     "endwith": "EndWith",
     "contain": "Contain",
     "concat": "Concat",
     "and": "And",
     "or": "Or",
-    "repeatatleast": "RepeatAtleast"
+    "repeat": "Repeat",
+    "repeatatleast": "RepeatAtleast",
+    "repeatrange": "RepeatRange",
+    "const": "String"
 }
 
-def regex_ast_to_asdl_ast(grammar, reg_ast):
+def streg_ast_to_asdl_ast(grammar, reg_ast):
     if reg_ast.children:
         rule = _NODE_CLASS_TO_RULE[reg_ast.node_class]
         prod = grammar.get_prod_by_ctr_name(rule)
         # unary
-        if rule in ["Not", "Star", "StartWith", "EndWith", "Contain"]:
-            child_ast_node = regex_ast_to_asdl_ast(grammar, reg_ast.children[0])
+        if rule in ["Not", "Star", "StartWith", "EndWith", "Contain", "NotCC", "Optional"]:
+            child_ast_node = streg_ast_to_asdl_ast(grammar, reg_ast.children[0])
             ast_node = AbstractSyntaxTree(prod,
                                             [RealizedField(prod['arg'], child_ast_node)])
             return ast_node
         elif rule in ["Concat", "And", "Or"]:
-            left_ast_node = regex_ast_to_asdl_ast(grammar, reg_ast.children[0])
-            right_ast_node = regex_ast_to_asdl_ast(grammar, reg_ast.children[1])
+            left_ast_node = streg_ast_to_asdl_ast(grammar, reg_ast.children[0])
+            right_ast_node = streg_ast_to_asdl_ast(grammar, reg_ast.children[1])
             ast_node = AbstractSyntaxTree(prod,
                                             [RealizedField(prod['left'], left_ast_node),
                                             RealizedField(prod['right'], right_ast_node)])
             return ast_node
-        elif rule in ["RepeatAtleast"]:
+        elif rule in ["RepeatAtleast", "Repeat"]:
             # primitive node
             # RealizedField(prod['predicate'], value=node_name)
-            child_ast_node = regex_ast_to_asdl_ast(grammar, reg_ast.children[0])
+            child_ast_node = streg_ast_to_asdl_ast(grammar, reg_ast.children[0])
             int_real_node = RealizedField(prod['k'], str(reg_ast.params[0]))
             ast_node = AbstractSyntaxTree(prod, [RealizedField(prod['arg'], child_ast_node), int_real_node])
             return ast_node
+        elif rule in ["RepeatRange"]:
+            child_ast_node = streg_ast_to_asdl_ast(grammar, reg_ast.children[0])
+            int_real_node1 = RealizedField(prod['k1'], str(reg_ast.params[0]))
+            int_real_node2 = RealizedField(prod['k2'], str(reg_ast.params[1]))
+            ast_node = AbstractSyntaxTree(prod, [RealizedField(prod['arg'], child_ast_node), int_real_node1, int_real_node2])
+            return ast_node
+        elif rule in ["String"]:
+            return AbstractSyntaxTree(prod, [RealizedField(prod['arg'], reg_ast.children[0].node_class)])
         else:
             raise ValueError("wrong node class", reg_ast.node_class)
     else:
-        if reg_ast.node_class in ["<num>", "<let>", "<vow>", "<low>", "<cap>", "<any>"]:
+        if reg_ast.node_class in ["<num>", "<let>", "<spec>", "<low>", "<cap>", "<any>"]:
             rule = "CharClass"
-        elif reg_ast.node_class in ["<m0>", "<m1>", "<m2>", "<m3>"]:
-            rule = "Const"
+        elif reg_ast.node_class.startswith("const") and reg_ast.node_class[5:].isdigit():
+            rule = "ConstSym"
+        elif reg_ast.node_class.startswith("<") and reg_ast.node_class.endswith(">"):
+            rule = "Token"
         else:
             raise ValueError("wrong node class", reg_ast.node_class)
         prod = grammar.get_prod_by_ctr_name(rule)
         return AbstractSyntaxTree(prod, [RealizedField(prod['arg'], reg_ast.node_class)])
 
-def regex_expr_to_ast(grammar, reg_tokens):
-    reg_ast = build_regex_ast_from_toks(reg_tokens, 0)[0]
+def streg_expr_to_ast(grammar, reg_tokens):
+    reg_ast = build_streg_ast_from_toks(reg_tokens, 0)[0]
     assert reg_ast.tokenized_logical_form() == reg_tokens
-    return regex_ast_to_asdl_ast(grammar, reg_ast)
+    return streg_ast_to_asdl_ast(grammar, reg_ast)
 
-def asdl_ast_to_regex_ast(asdl_ast):
+def asdl_ast_to_streg_ast(asdl_ast):
     rule = asdl_ast.production.constructor.name
-    if rule in ["CharClass", "Const"]:
-        return RegexNode(asdl_ast['arg'].value)
-    elif rule in ["Not", "Star", "StartWith", "EndWith", "Contain", "Concat", "And", "Or"]:
+    if rule in ["CharClass", "ConstSym", "Token"]:
+        return StRegNode(asdl_ast['arg'].value)
+    elif rule in ["String"]:
+        c_val = asdl_ast['arg'].value
+        if c_val.startswith("<") and c_val.endswith(">"):
+            child = StRegNode(c_val)
+            return StRegNode("const", [child])
+        else:
+            return StRegNode("none")
+    elif rule in ["Not", "Star", "StartWith", "EndWith", "Contain", "Concat", "And", "Or", "NotCC", "Optional"]:
         node_class = rule.lower()
-        return RegexNode(node_class, [asdl_ast_to_regex_ast(x.value) for x in asdl_ast.fields])
-    elif rule in ["RepeatAtleast"]:
+        return StRegNode(node_class, [asdl_ast_to_streg_ast(x.value) for x in asdl_ast.fields])
+    elif rule in ["RepeatAtleast", "Repeat"]:
         node_class = rule.lower()
         if asdl_ast['k'].value.isdigit():
             param = int(asdl_ast['k'].value)
-            child_node = asdl_ast_to_regex_ast(asdl_ast['arg'].value)
-            return RegexNode(node_class, [child_node], [param])
+            child_node = asdl_ast_to_streg_ast(asdl_ast['arg'].value)
+            return StRegNode(node_class, [child_node], [param])
         else:
-            return RegexNode("none")
+            return StRegNode("none")
+    elif rule in ["RepeatRange"]:
+        node_class = rule.lower()
+        if asdl_ast['k1'].value.isdigit() and asdl_ast['k2'].value.isdigit():
+            params = [int(asdl_ast['k1'].value), int(asdl_ast['k2'].value)]
+            child_node = asdl_ast_to_streg_ast(asdl_ast['arg'].value)
+            return StRegNode(node_class, [child_node], params)
+        else:
+            return StRegNode("none")
     else:
         raise ValueError("wrong ast rule", rule)
 
-def asdl_ast_to_regex_expr(asdl_ast):
-    reg_ast = asdl_ast_to_regex_ast(asdl_ast)
+def asdl_ast_to_streg_expr(asdl_ast):
+    reg_ast = asdl_ast_to_streg_ast(asdl_ast)
     return " ".join(reg_ast.tokenized_logical_form())
 
 # neglet created time
@@ -122,16 +156,16 @@ def is_equal_ast(this_ast, other_ast):
     else:
         return this_ast == other_ast
 
-@Registrable.register('regex')
-class RegexTransitionSystem(TransitionSystem):
+@Registrable.register('streg')
+class StRegTransitionSystem(TransitionSystem):
     def compare_ast(self, hyp_ast, ref_ast):
         return is_equal_ast(hyp_ast, ref_ast)
 
     def ast_to_surface_code(self, asdl_ast):
-        return asdl_ast_to_regex_expr(asdl_ast)
+        return asdl_ast_to_streg_expr(asdl_ast)
     
     def surface_code_to_ast(self, code):
-        return regex_expr_to_ast(self.grammar, code)
+        return streg_expr_to_ast(self.grammar, code)
     
     def hyp_correct(self, hype, example):
         return is_equal_ast(hype.tree, example.tgt_ast)

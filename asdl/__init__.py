@@ -2,6 +2,7 @@ import six
 from .lang.lambda_dcs.lambda_dcs_transition_system import LambdaCalculusTransitionSystem
 from .lang.prolog.prolog_transition_system import PrologTransitionSystem
 from .lang.regex.regex_transition_system import RegexTransitionSystem
+from .lang.streg.streg_transition_system import StRegTransitionSystem
 
 if six.PY2:
     from .lang.py.py_transition_system import PythonTransitionSystem
