@@ -25,7 +25,7 @@ from model import nn_utils
 from model.attention_util import AttentionUtil
 from model.nn_utils import LabelSmoothing
 from model.pointer_net import PointerNet
-from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs
+from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs, asdl_ast_to_streg_ast
 
 @Registrable.register('default_parser')
 class Parser(nn.Module):
@@ -1061,7 +1061,7 @@ class Parser(nn.Module):
                 new_hyp.score = new_hyp_score
 
                 if new_hyp.completed:
-                    noncheckable_hyp_pool.append((True, new_hyp, prev_hyp_id, None))
+                    checkable_hyp_pool.append((True, new_hyp, prev_hyp_id, asdl_ast_to_streg_ast(new_hyp.tree)))
                 else:
                     need_to_check, partial_tree = partial_asdl_ast_to_streg_ast(new_hyp.tree)
                     if need_to_check:
