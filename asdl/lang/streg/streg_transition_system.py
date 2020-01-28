@@ -11,6 +11,8 @@ except:
 from asdl.asdl import *
 from asdl.asdl_ast import RealizedField, AbstractSyntaxTree
 from common.registerable import Registrable
+import subprocess
+
 """
 # define primitive fields
 int, cc, tok
@@ -132,6 +134,146 @@ def asdl_ast_to_streg_ast(asdl_ast):
             return StRegNode("none")
     else:
         raise ValueError("wrong ast rule", rule)
+
+# we dont aprox not cc
+def eligiable_to_approx(node):
+    if None in node.params:
+        return False
+    if node.node_class == "notcc":
+        if not _is_streg_ast_complete(node):
+            return False
+
+    if len(node.children) == 0:
+        return node.node_class is not None
+
+    valid_children = [x for x in node.children if x is not None]
+    if len(valid_children) == 0:
+        return False
+    else:
+        return all([eligiable_to_approx(x) for x in valid_children])
+
+def _is_streg_ast_complete(node):
+    if None in node.children:
+        return False
+    if None in node.params:
+        return False
+    return all([_is_streg_ast_complete(x) for x in node.children])
+
+def partial_asdl_ast_to_streg_ast(asdl_ast):
+    streg_ast = _partial_asdl_ast_to_streg_ast(asdl_ast)
+    need_to_check = eligiable_to_approx(streg_ast)
+    # if need_to_check:
+    #     print("can check", streg_ast.debug_form())
+    #     print(asdl_ast)
+    return need_to_check, streg_ast
+
+def _partial_asdl_ast_to_streg_ast(asdl_ast):
+    if asdl_ast is None:
+        return None
+    # print("In", asdl_ast, asdl_ast.fields, [x.value for x in asdl_ast.fields])
+    rule = asdl_ast.production.constructor.name
+    if rule in ["CharClass", "ConstSym", "Token"]:
+        return StRegNode(asdl_ast['arg'].value)
+    elif rule in ["String"]:
+        c_val = asdl_ast['arg'].value
+        if c_val is None:
+            return StRegNode("const", [None])
+        if c_val.startswith("<") and c_val.endswith(">"):
+            child = StRegNode(c_val)
+            return StRegNode("const", [child])
+        else:
+            return StRegNode("none")
+    elif rule in ["Not", "Star", "StartWith", "EndWith", "Contain", "Concat", "And", "Or", "NotCC", "Optional"]:
+        node_class = rule.lower()
+        return StRegNode(node_class, [_partial_asdl_ast_to_streg_ast(x.value) for x in asdl_ast.fields])
+    elif rule in ["RepeatAtleast", "Repeat"]:
+        node_class = rule.lower()
+        if asdl_ast['k'].value:
+            if asdl_ast['k'].value.isdigit():
+                param = int(asdl_ast['k'].value)
+                child_node = _partial_asdl_ast_to_streg_ast(asdl_ast['arg'].value)
+                return StRegNode(node_class, [child_node], [param])
+            else:
+                return StRegNode("none")
+        else:
+            child_node = _partial_asdl_ast_to_streg_ast(asdl_ast['arg'].value)
+            return StRegNode(node_class, [child_node], [None])   
+    elif rule in ["RepeatRange"]:
+        node_class = rule.lower()
+        if asdl_ast['k1'].value:
+            if asdl_ast['k1'].value.isdigit():
+                k1 = int(asdl_ast['k1'].value)
+            else:
+                return StRegNode("none")
+        else:
+            k1 = None
+        if asdl_ast['k2'].value:
+            if asdl_ast['k2'].value.isdigit():
+                k2 = int(asdl_ast['k2'].value)
+            else:
+                return StRegNode("none")
+        else:
+            k2 = None
+        child_node = _partial_asdl_ast_to_streg_ast(asdl_ast['arg'].value)
+        return StRegNode(node_class, [child_node], [k1, k2])
+    else:
+        raise ValueError("wrong ast rule", rule)
+
+def preverify_regex_with_exs(streg_ast, c_map, exs):
+    # pred_line = " ".join(preds)
+
+    over_approx = _get_approx(streg_ast, True)
+    over_approx = _inverse_regex_with_map(over_approx, c_map)
+    under_approx = _get_approx(streg_ast, False)
+    under_approx = _inverse_regex_with_map(under_approx, c_map)
+    pred_line = "{} {}".format(over_approx, under_approx)
+    exs_line = " ".join(["{},{}".format(x[0], x[1]) for x in exs])
+
+    if "none" in pred_line:
+        return False
+    if "const" in pred_line:
+        return False
+
+    out = subprocess.check_output(
+        ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify',
+            pred_line, exs_line])
+    # stderr=subprocess.DEVNULL    
+    out = out.decode("utf-8")
+    out = out.rstrip()
+    # print(streg_ast.debug_form())
+    return out == "true"
+
+# fill True -> full False: empty
+def _get_approx(node, fill):
+    if len(node.children) == 0:
+        return node.node_class
+
+    children_approx = []
+    for c in node.children:
+        if c is None:
+            if fill:
+                children_approx.append("star(<any>)")
+            else:
+                children_approx.append("null")
+        else:
+            if node.node_class == "not":
+                children_approx.append(_get_approx(c,not fill))
+            else:
+                children_approx.append(_get_approx(c, fill))
+    # print(children_approx)
+    # print(node.params)
+    return node.node_class + "(" + ",".join(children_approx + [str(x) for x in node.params]) + ")"
+    
+
+def _inverse_regex_with_map(r, maps):
+    for m in maps:
+        src = m[0]
+        if len(m[1]) == 1:
+            dst = "<{}>".format(m[1])
+        else:
+            dst = "const(<{}>)".format(m[1])
+        r = r.replace(src, dst)
+    return r
 
 def asdl_ast_to_streg_expr(asdl_ast):
     reg_ast = asdl_ast_to_streg_ast(asdl_ast)

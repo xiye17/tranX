@@ -147,5 +147,8 @@ class TransitionSystem(object):
         elif lang == 'regex':
             from .lang.regex.regex_transition_system import RegexTransitionSystem
             return RegexTransitionSystem
+        elif lang == 'streg':
+            from .lang.streg.streg_transition_system import StRegTransitionSystem
+            return StRegTransitionSystem
 
         raise ValueError('unknown language %s' % lang)
