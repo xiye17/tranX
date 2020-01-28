@@ -25,7 +25,7 @@ from model import nn_utils
 from model.attention_util import AttentionUtil
 from model.nn_utils import LabelSmoothing
 from model.pointer_net import PointerNet
-from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs
+from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs
 
 @Registrable.register('default_parser')
 class Parser(nn.Module):
@@ -995,6 +995,9 @@ class Parser(nn.Module):
             top_new_hyp_scores, top_new_hyp_pos = torch.topk(new_hyp_scores, k=new_hyp_scores.size(0))
             live_hyp_ids = []
             new_hypotheses = []
+
+            checkable_hyp_pool = []
+            noncheckable_hyp_pool = []
             for new_hyp_score, new_hyp_pos in zip(top_new_hyp_scores.data.cpu(), top_new_hyp_pos.data.cpu()):
                 action_info = ActionInfo()
                 if new_hyp_pos < len(applyrule_new_hyp_scores):
@@ -1058,21 +1061,42 @@ class Parser(nn.Module):
                 new_hyp.score = new_hyp_score
 
                 if new_hyp.completed:
-                    # chheck syntax
-                    completed_hypotheses.append(new_hyp)
+                    noncheckable_hyp_pool.append((True, new_hyp, prev_hyp_id, None))
                 else:
                     need_to_check, partial_tree = partial_asdl_ast_to_streg_ast(new_hyp.tree)
-                    is_a_live_hype = False
                     if need_to_check:
-                        is_a_live_hype = preverify_regex_with_exs(partial_tree, context['const_map'], context['str_exs'])
+                        checkable_hyp_pool.append((False, new_hyp, prev_hyp_id, partial_tree))
                     else:
-                        is_a_live_hype = True
-                    if is_a_live_hype:
-                        new_hypotheses.append(new_hyp)
-                        live_hyp_ids.append(prev_hyp_id)
+                        noncheckable_hyp_pool.append((False, new_hyp, prev_hyp_id, None))
                 
-                if len(live_hyp_ids) + len(completed_hypotheses) == beam_size:
-                    break
+                # if new_hyp.completed:
+                #     # chheck syntax
+                #     completed_hypotheses.append(new_hyp)
+                # else:
+                #     need_to_check, partial_tree = partial_asdl_ast_to_streg_ast(new_hyp.tree)
+                #     is_a_live_hype = False
+                #     if need_to_check:
+                #         is_a_live_hype = preverify_regex_with_exs(partial_tree, context['const_map'], context['str_exs'])
+                #     else:
+                #         is_a_live_hype = True
+                #     if is_a_live_hype:
+                #         new_hypotheses.append(new_hyp)
+                #         live_hyp_ids.append(prev_hyp_id)
+                
+                # if len(live_hyp_ids) + len(completed_hypotheses) == beam_size:
+                #     break
+            pool = noncheckable_hyp_pool
+            if checkable_hyp_pool:
+                batch_results = batch_preverify_regex_with_exs([x[3] for x in checkable_hyp_pool], context['const_map'], context['str_exs'])
+                pool += [x for (x,y) in zip(checkable_hyp_pool, batch_results) if y]
+
+            pool.sort(key=lambda x: x[1].score, reverse=True)
+            for record in pool[:(beam_size - len(completed_hypotheses))]:
+                if record[0]:
+                    completed_hypotheses.append(record[1])
+                else:
+                    new_hypotheses.append(record[1])
+                    live_hyp_ids.append(record[2])
 
             if live_hyp_ids:
                 hyp_states = [hyp_states[i] + [(h_t[i], cell_t[i])] for i in live_hyp_ids]

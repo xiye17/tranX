@@ -12,6 +12,9 @@ from asdl.asdl import *
 from asdl.asdl_ast import RealizedField, AbstractSyntaxTree
 from common.registerable import Registrable
 import subprocess
+from os.path import join
+import os
+import random
 
 """
 # define primitive fields
@@ -242,6 +245,29 @@ def preverify_regex_with_exs(streg_ast, c_map, exs):
     out = out.rstrip()
     # print(streg_ast.debug_form())
     return out == "true"
+
+
+def batch_preverify_regex_with_exs(streg_asts, c_map, exs):
+    # pred_line = " ".join(preds)
+
+    over_approx = [_inverse_regex_with_map(_get_approx(x, True), c_map) for x in streg_asts]
+    under_approx = [_inverse_regex_with_map(_get_approx(x, False), c_map) for x in streg_asts]
+    pred_line = "\t".join(["{} {}".format(o, u) for (o, u) in zip(over_approx, under_approx)])
+    exs_line = " ".join(["{},{}".format(x[0], x[1]) for x in exs])
+
+
+    filename = join("./external/", str(random.random()) + ".in")
+    # print(pred_line)
+    with open(filename, "w") as f:
+        f.write(pred_line + "\n")
+        f.write(exs_line)
+    out = subprocess.check_output(
+        ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify_file',
+            filename], stderr=subprocess.DEVNULL)
+    os.remove(filename)
+    out = out.decode("utf-8")
+    out = out.rstrip().split(" ")
+    return [x == "true" for x in out]
 
 # fill True -> full False: empty
 def _get_approx(node, fill):
