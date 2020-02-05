@@ -121,6 +121,20 @@ def eval_streg():
             f.write(" ".join(line_fields) + "\n")
 
 
+
+def load_report(filename):
+    prefix = "./dataset"
+    with open(join(prefix, filename)) as f:
+        lines = f.readlines()
+        lines = [x.rstrip().split(" ") for x in lines]
+    r = lines
+    id_list = [int(x[0]) for x in r]
+    res_list = [x[1] == "True" for x in r]
+    status_list = [x[2] for x in r]
+    pred_list = [x[3:] for x in r]
+    return id_list, res_list, status_list, pred_list
+
+
 if __name__ == '__main__':
     print(sys.argv)
     # eval()
