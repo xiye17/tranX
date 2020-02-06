@@ -324,6 +324,26 @@ def is_equal_ast(this_ast, other_ast):
     else:
         return this_ast == other_ast
 
+
+def is_partial_ast(this_ast, ref_ast):
+    if this_ast is None:
+        return True
+    
+    if isinstance(this_ast, AbstractSyntaxTree):
+        if this_ast.production != ref_ast.production:
+            return False
+        
+        if len(this_ast.fields) != len(ref_ast.fields):
+            return False
+        
+        for this_f, other_f in zip(this_ast.fields, ref_ast.fields):
+            if not is_partial_ast(this_f.value, other_f.value):
+                return False
+        return True
+    else:
+        return this_ast == ref_ast
+
+
 @Registrable.register('streg')
 class StRegTransitionSystem(TransitionSystem):
     def compare_ast(self, hyp_ast, ref_ast):

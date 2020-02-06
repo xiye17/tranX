@@ -28,6 +28,8 @@ from model import nn_utils, utils
 
 from model.parser import Parser
 from model.utils import GloveHelper, get_parser_class
+from eval import eval_streg_predictions
+from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast
 
 if six.PY3:
     # import additional packages for wikisql dataset (works only under Python 3)
@@ -244,8 +246,15 @@ def test(args):
         pickle.dump(decode_results, open(args.save_decode_to, 'wb'))
 
 
+# non consistent
+# debug_idx = [2, 4, 14, 16, 20, 28, 32, 37, 39, 43, 47, 56, 57, 58, 59, 65, 66, 67, 68, 73, 75, 80, 85, 86, 87, 91, 98, 100, 101, 104, 109, 123, 126, 130, 131, 141, 146, 150, 156, 166, 172, 173, 181, 184, 191, 193, 198, 203, 209, 211, 212, 216, 224, 226, 227, 228, 234, 236, 237, 239, 247, 249, 256, 258, 260, 265, 266, 267, 268, 273, 274, 286, 289, 295, 296, 298, 299, 307, 309, 319, 346, 348, 353, 359, 371, 385, 386, 389, 398, 401, 414, 415, 416, 417, 418, 421, 424, 425, 426, 429, 443, 444, 449, 452, 454, 459, 468, 469, 470, 471, 479, 481, 488, 491, 492, 493, 494, 498, 501, 503, 509, 510, 515, 517, 519, 520, 525, 529, 537, 543, 544, 548, 553, 559, 574, 598, 606, 609, 612, 613, 621, 627]
+
+# spurious
+debug_idx = [5, 9, 11, 13, 19, 27, 36, 38, 41, 54, 62, 64, 69, 70, 79, 81, 84, 89, 90, 94, 97, 99, 107, 108, 115, 118, 120, 125, 127, 128, 132, 133, 137, 140, 143, 145, 147, 148, 154, 155, 157, 158, 159, 160, 161, 164, 165, 170, 171, 179, 182, 195, 196, 204, 217, 218, 220, 223, 231, 233, 235, 254, 255, 269, 271, 272, 275, 277, 288, 294, 297, 306, 308, 311, 312, 315, 318, 329, 330, 331, 332, 338, 340, 342, 349, 351, 352, 355, 356, 357, 358, 374, 375, 376, 392, 393, 396, 402, 403, 412, 413, 422, 423, 430, 441, 458, 460, 461, 462, 476, 478, 487, 489, 496, 497, 500, 502, 508, 513, 514, 516, 522, 523, 526, 527, 528, 532, 533, 538, 539, 540, 542, 546, 547, 551, 552, 554, 555, 556, 558, 562, 568, 571, 572, 575, 576, 577, 578, 579, 583, 594, 599, 607, 608, 611, 614, 617, 618, 623]
+
 def pl_test(args):
     test_set = Dataset.from_bin_file(args.test_file)
+    test_set.examples = [x for i,x in enumerate(test_set.examples) if i in debug_idx]
     assert args.load_model
     print('load model from [%s]' % args.load_model, file=sys.stderr)
     params = torch.load(args.load_model, map_location=lambda storage, loc: storage)
@@ -259,12 +268,40 @@ def pl_test(args):
     parser = parser_cls.load(model_path=args.load_model, cuda=args.cuda)
     parser.eval()
     evaluator = Registrable.by_name(args.evaluator)(transition_system, args=args)
-    eval_results, decode_results = evaluation.pl_evaluate(test_set.examples, parser, evaluator, args,
-                                                       verbose=args.verbose, return_decode_result=True)
+    
+    # decode_results, turning_point = [before_decodes, after_decodes], 
+    eval_results, decode_results, debug_info = evaluation.pl_evaluate(test_set.examples, parser, evaluator, args,
+                                                       verbose=args.verbose, return_decode_result=True, debug=True)
     print(eval_results, file=sys.stderr)
-    if args.save_decode_to:
-        pickle.dump(decode_results, open(args.save_decode_to, 'wb'))
+    # if args.save_decode_to:
+    #     pickle.dump(decode_results, open(args.save_decode_to, 'wb'))
 
+    # dump_debug_info
+
+    with open("spurious_info.txt", "w") as f:
+        for idx, ex, pred_hyps, info in zip(debug_idx, test_set.examples, decode_results, debug_info):
+            predictions = [x.code.replace(" ", "") for x in pred_hyps]
+            f.write("----------------{}------------------\n".format(idx))
+            f.write("Src: {}\n".format(" ".join(ex.src_sent)))
+            f.write("Tgt: {}\n".format(ex.tgt_code.replace(" ", "")))
+            f.write("Predictions:\n")
+            pred_results = eval_streg_predictions(predictions, ex)
+            for p, r in zip(predictions, pred_results):
+                f.write("\t{} {}\n".format(r, p.replace(" ", "")))
+
+            prev_beam, latter_beam = info
+            prev_beam.sort(key=lambda hyp: -hyp.score)
+            latter_beam.sort(key=lambda hyp: -hyp.score)
+            f.write("Beam {}:\n".format(prev_beam[0].t))
+            for p_hyp in prev_beam:
+                _, partial_ast = partial_asdl_ast_to_streg_ast(p_hyp.tree)
+                f.write("\t{:.2f} {}\n".format(p_hyp.score, partial_ast.debug_form()))
+            
+            f.write("Beam {}:\n".format(latter_beam[0].t))
+            for p_hyp in latter_beam:
+                _, partial_ast = partial_asdl_ast_to_streg_ast(p_hyp.tree)
+                f.write("\t{:.2f} {}\n".format(p_hyp.score, partial_ast.debug_form()))
+            f.write("\n")
 
 if __name__ == '__main__':
     arg_parser = init_arg_parser()

@@ -65,7 +65,7 @@ def evaluate(examples, parser, evaluator, args, verbose=False, return_decode_res
     else:
         return eval_result
 
-def pl_decode(examples, model, args, verbose=False, **kwargs):
+def pl_decode(examples, model, args, verbose=False, debug=False, **kwargs):
     ## TODO: create decoder for each dataset
 
     if verbose:
@@ -76,9 +76,13 @@ def pl_decode(examples, model, args, verbose=False, **kwargs):
 
 
     decode_results = []
+    debug_info = []
     count = 0
     for example in tqdm(examples, desc='Decoding', file=sys.stdout, total=len(examples)):
-        hyps = model.pl_parse(example.src_sent, context={'str_exs': example.meta['str_exs'], 'const_map': example.meta['const_map']}, beam_size=args.beam_size)
+        if debug:
+            hyps, debug_output = model.pl_parse(example.src_sent, context={'str_exs': example.meta['str_exs'], 'const_map': example.meta['const_map'], 'tgt_ast': example.tgt_ast}, beam_size=args.beam_size, pl_debug=debug)
+        else:
+            hyps = model.pl_parse(example.src_sent, context={'str_exs': example.meta['str_exs'], 'const_map': example.meta['const_map']}, beam_size=args.beam_size)
         decoded_hyps = []
         for hyp_id, hyp in enumerate(hyps):
             got_code = False
@@ -104,16 +108,23 @@ def pl_decode(examples, model, args, verbose=False, **kwargs):
         count += 1
 
         decode_results.append(decoded_hyps)
+        if debug:
+            debug_info.append(debug_output)
 
     if was_training: model.train()
-
+    if debug:
+        return decode_results, debug_info        
     return decode_results
 
-def pl_evaluate(examples, parser, evaluator, args, verbose=False, return_decode_result=False, eval_top_pred_only=False):
-    decode_results = pl_decode(examples, parser, args, verbose=verbose)
-
+def pl_evaluate(examples, parser, evaluator, args, verbose=False, return_decode_result=False, eval_top_pred_only=False, debug=False):
+    if debug:
+        decode_results, turning_point = pl_decode(examples, parser, args, verbose=verbose, debug=debug)
+    else:
+        decode_results = pl_decode(examples, parser, args, verbose=verbose, debug=debug)
     eval_result = evaluator.evaluate_dataset(examples, decode_results, fast_mode=eval_top_pred_only)
-
+    
+    if debug:
+        return eval_result, decode_results, turning_point
     if return_decode_result:
         return eval_result, decode_results
     else:

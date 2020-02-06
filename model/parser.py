@@ -25,7 +25,7 @@ from model import nn_utils
 from model.attention_util import AttentionUtil
 from model.nn_utils import LabelSmoothing
 from model.pointer_net import PointerNet
-from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs, asdl_ast_to_streg_ast
+from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs, asdl_ast_to_streg_ast, is_equal_ast, is_partial_ast
 
 @Registrable.register('default_parser')
 class Parser(nn.Module):
@@ -783,7 +783,7 @@ class Parser(nn.Module):
         return completed_hypotheses
 
 
-    def pl_parse(self, src_sent, context=None, beam_size=5, debug=False):
+    def pl_parse(self, src_sent, context=None, beam_size=5, debug=False, pl_debug=False):
         """Perform beam search to infer the target AST given a source utterance
 
         Args:
@@ -827,6 +827,10 @@ class Parser(nn.Module):
         hypotheses = [DecodeHypothesis()]
         hyp_states = [[]]
         completed_hypotheses = []
+
+        found_in_completed = False
+        turning_point = None
+        last_hyps = []
 
         while len(completed_hypotheses) < beam_size and t < args.decode_max_time_step:
             hyp_num = len(hypotheses)
@@ -1094,9 +1098,19 @@ class Parser(nn.Module):
             for record in pool[:(beam_size - len(completed_hypotheses))]:
                 if record[0]:
                     completed_hypotheses.append(record[1])
+                    if pl_debug and turning_point is None:
+                        if not found_in_completed:
+                            found_in_completed = is_equal_ast(record[1].tree, context['tgt_ast'])
                 else:
                     new_hypotheses.append(record[1])
                     live_hyp_ids.append(record[2])
+
+            if pl_debug:
+                if (turning_point is None) and (not found_in_completed):
+                    gt_contained = any([is_partial_ast(x.tree, context['tgt_ast']) for x in new_hypotheses])
+                    if not gt_contained:
+                        turning_point = (last_hyps, completed_hypotheses + new_hypotheses)
+                    last_hyps = completed_hypotheses + new_hypotheses
 
             if live_hyp_ids:
                 hyp_states = [hyp_states[i] + [(h_t[i], cell_t[i])] for i in live_hyp_ids]
@@ -1109,7 +1123,9 @@ class Parser(nn.Module):
                 break
 
         completed_hypotheses.sort(key=lambda hyp: -hyp.score)
-        # exit()
+
+        if pl_debug:
+            return completed_hypotheses, turning_point        
         return completed_hypotheses
 
     def save(self, path):

@@ -5,6 +5,7 @@ from components.dataset import Dataset, Example
 import subprocess
 from os.path import join
 import os
+import random
 
 def check_equiv(spec0, spec1):
     if spec0 == spec1:
@@ -54,7 +55,7 @@ def external_evalute_single(gt_spec, preds, exs, flag_force=False):
 
     flag_use_file = len(preds) > 100
     if flag_use_file:
-        filename = join("./external/", "tmp.in")
+        filename = join("./external/", "eval_single_{}.in".format(random.random()))
         with open(filename, "w") as f:
             f.write(pred_line + "\n")
             f.write(exs_line + "\n")
@@ -120,7 +121,10 @@ def eval_streg():
                                 for x in enumerate(res[2])])
             f.write(" ".join(line_fields) + "\n")
 
-
+def eval_streg_predictions(predictions, gt_exs):
+    gt_code = gt_exs.tgt_code.replace(" ", "")
+    match_result = batch_filtering_test(gt_code, predictions, gt_exs.meta, flag_force=True)
+    return match_result[2]
 
 def load_report(filename):
     prefix = "./dataset"
