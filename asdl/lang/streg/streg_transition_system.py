@@ -140,16 +140,20 @@ def asdl_ast_to_streg_ast(asdl_ast):
 
 # we dont aprox not cc
 def eligiable_to_approx(node):
-    if None in node.params:
-        return False
+    # if None in node.params:
+    #     return False
     if node.node_class == "notcc":
         if not _is_streg_ast_complete(node):
             return False
 
+    if node.node_class is None:
+        return False
+    
     if len(node.children) == 0:
-        return node.node_class is not None
+        return True
 
     valid_children = [x for x in node.children if x is not None]
+
     if len(valid_children) == 0:
         return False
     else:
@@ -299,6 +303,27 @@ def batch_preverify_regex_with_exs(streg_asts, c_map, exs):
 def _get_approx(node, fill):
     if len(node.children) == 0:
         return node.node_class
+
+    if None in node.params:
+        if node.node_class in ["repeat", "repeatatleast"]:
+            if fill:
+                return "repeatatleast({},1)".format(_get_approx(node.children[0], fill))
+            else:
+                return "null"
+        elif node.node_class == "repeatrange":
+            if node.params[0] is None:
+                if fill:
+                    return "star({})".format(_get_approx(node.children[0], fill))
+                else:
+                    return "null"
+            elif node.params[1] is None:
+                if fill:
+                    return "repeatatleast({},{})".format(_get_approx(node.children[0], fill), node.params[0])
+                else:
+                    return "null"
+        else:
+            raise ValueError("not eligiable for approx", node.debug_form())
+
 
     children_approx = []
     for c in node.children:

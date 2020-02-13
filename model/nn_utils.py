@@ -88,7 +88,12 @@ def to_input_variable(sequences, vocab, cuda=False, training=True, append_bounda
     word_ids = word2id(sequences, vocab)
     sents_t = input_transpose(word_ids, vocab['<pad>'])
 
-    sents_var = Variable(torch.LongTensor(sents_t), volatile=(not training), requires_grad=False)
+    # sents_var = Variable(torch.LongTensor(sents_t), volatile=(not training), requires_grad=False)
+    if training:
+        sents_var = torch.LongTensor(sents_t)
+    else:
+        with torch.no_grad():
+            sents_var = torch.LongTensor(sents_t)
     if cuda:
         sents_var = sents_var.cuda()
 
