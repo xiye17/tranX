@@ -155,6 +155,32 @@ def eligiable_to_approx(node):
     else:
         return all([eligiable_to_approx(x) for x in valid_children])
 
+def adhoc_check(node, sent, exs):
+    if node.children:
+        return all([adhoc_check(x, sent, exs) for x in node.children if x is not None])
+
+    if node.node_class is None:
+        return True
+    
+    c = node.node_class
+    if c.startswith("const"):
+        # print("False c map")
+        return c in sent
+
+    if c in ["<pad>", "</s>"]:
+        return False
+    if not (c.startswith("<") and c.endswith(">")):
+        # print("False Tok")
+        return False
+
+    c = c[1:-1]
+    if c in ["num", "let", "low", "cap", "spec", "any"]:
+        return True
+    if c in [ "-", ",", ";", ".", "_", "+", ":", "!", "@", "#", "$", "%", "&", "^", "*", "="]:
+        return True
+    # print("False not in", node.node_class)
+    return False
+
 def _is_streg_ast_complete(node):
     if None in node.children:
         return False

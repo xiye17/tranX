@@ -25,7 +25,7 @@ from model import nn_utils
 from model.attention_util import AttentionUtil
 from model.nn_utils import LabelSmoothing
 from model.pointer_net import PointerNet
-from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs, asdl_ast_to_streg_ast, is_equal_ast, is_partial_ast
+from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs, asdl_ast_to_streg_ast, is_equal_ast, is_partial_ast, adhoc_check
 
 @Registrable.register('default_parser')
 class Parser(nn.Module):
@@ -1071,30 +1071,15 @@ class Parser(nn.Module):
                     if need_to_check:
                         checkable_hyp_pool.append((False, new_hyp, prev_hyp_id, partial_tree))
                     else:
-                        noncheckable_hyp_pool.append((False, new_hyp, prev_hyp_id, None))
-                
-                # if new_hyp.completed:
-                #     # chheck syntax
-                #     completed_hypotheses.append(new_hyp)
-                # else:
-                #     need_to_check, partial_tree = partial_asdl_ast_to_streg_ast(new_hyp.tree)
-                #     is_a_live_hype = False
-                #     if need_to_check:
-                #         is_a_live_hype = preverify_regex_with_exs(partial_tree, context['const_map'], context['str_exs'])
-                #     else:
-                #         is_a_live_hype = True
-                #     if is_a_live_hype:
-                #         new_hypotheses.append(new_hyp)
-                #         live_hyp_ids.append(prev_hyp_id)
-                
-                # if len(live_hyp_ids) + len(completed_hypotheses) == beam_size:
-                #     break
+                        noncheckable_hyp_pool.append((False, new_hyp, prev_hyp_id, partial_tree))
+
             pool = noncheckable_hyp_pool
             if checkable_hyp_pool:
                 batch_results = batch_preverify_regex_with_exs([x[3] for x in checkable_hyp_pool], context['const_map'], context['str_exs'])
                 pool += [x for (x,y) in zip(checkable_hyp_pool, batch_results) if y]
 
             pool.sort(key=lambda x: x[1].score, reverse=True)
+            pool = [x for x in pool if adhoc_check(x[3], src_sent, context['str_exs'])]
             for record in pool[:(beam_size - len(completed_hypotheses))]:
                 if record[0]:
                     completed_hypotheses.append(record[1])
