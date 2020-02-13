@@ -249,7 +249,7 @@ def test(args):
 
 def pl_test(args):
     test_set = Dataset.from_bin_file(args.test_file)
-    test_set.examples = test_set.examples[:10]
+    # test_set.examples = test_set.examples[:10]
     assert args.load_model
     print('load model from [%s]' % args.load_model, file=sys.stderr)
     params = torch.load(args.load_model, map_location=lambda storage, loc: storage)
