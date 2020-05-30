@@ -82,7 +82,9 @@ def pl_decode(examples, model, args, verbose=False, debug=False, **kwargs):
         if debug:
             hyps, debug_output = model.pl_parse(example.src_sent, context={'str_exs': example.meta['str_exs'], 'const_map': example.meta['const_map'], 'tgt_ast': example.tgt_ast}, beam_size=args.beam_size, pl_debug=debug)
         else:
-            hyps = model.pl_parse(example.src_sent, context={'str_exs': example.meta['str_exs'], 'const_map': example.meta['const_map']}, beam_size=args.beam_size)
+            de_results = model.pl_parse(example.src_sent, context={'str_exs': example.meta['str_exs'], 'const_map': example.meta['const_map']}, beam_size=args.beam_size)
+        hyps = de_results.decodes
+        
         decoded_hyps = []
         for hyp_id, hyp in enumerate(hyps):
             got_code = False
@@ -107,7 +109,7 @@ def pl_decode(examples, model, args, verbose=False, debug=False, **kwargs):
 
         count += 1
 
-        decode_results.append(decoded_hyps)
+        decode_results.append(de_results)
         if debug:
             debug_info.append(debug_output)
 
@@ -121,7 +123,8 @@ def pl_evaluate(examples, parser, evaluator, args, verbose=False, return_decode_
         decode_results, turning_point = pl_decode(examples, parser, args, verbose=verbose, debug=debug)
     else:
         decode_results = pl_decode(examples, parser, args, verbose=verbose, debug=debug)
-    eval_result = evaluator.evaluate_dataset(examples, decode_results, fast_mode=eval_top_pred_only)
+    _decode_results = [x.decodes for x in decode_results]
+    eval_result = evaluator.evaluate_dataset(examples, _decode_results, fast_mode=eval_top_pred_only)
     
     if debug:
         return eval_result, decode_results, turning_point

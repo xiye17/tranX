@@ -26,6 +26,7 @@ from model.attention_util import AttentionUtil
 from model.nn_utils import LabelSmoothing
 from model.pointer_net import PointerNet
 from asdl.lang.streg.streg_transition_system import partial_asdl_ast_to_streg_ast, preverify_regex_with_exs, batch_preverify_regex_with_exs, asdl_ast_to_streg_ast, is_equal_ast, is_partial_ast, adhoc_check
+from components.result import DecodeResult
 
 @Registrable.register('default_parser')
 class Parser(nn.Module):
@@ -832,7 +833,8 @@ class Parser(nn.Module):
         found_in_completed = False
         turning_point = None
         last_hyps = []
-
+    
+        num_executed = 0
         while len(completed_hypotheses) < beam_size and t < args.decode_max_time_step:
             hyp_num = len(hypotheses)
 
@@ -1077,14 +1079,24 @@ class Parser(nn.Module):
                         noncheckable_hyp_pool.append((False, new_hyp, prev_hyp_id, partial_tree))
 
             pool = noncheckable_hyp_pool
+            all_scores_this_time = [x[1].score.item() for x in checkable_hyp_pool] + [x[1].score.item() for x in noncheckable_hyp_pool]
+            all_scores_this_time.sort(reverse=True)
+
             if checkable_hyp_pool:
                 batch_results = batch_preverify_regex_with_exs([x[3] for x in checkable_hyp_pool], context['const_map'], context['str_exs'])
                 pool += [x for (x,y) in zip(checkable_hyp_pool, batch_results) if y]
 
             pool.sort(key=lambda x: x[1].score, reverse=True)
             pool = [x for x in pool if adhoc_check(x[3], src_sent, context['str_exs'])]
+
+            num_slots = beam_size - len(completed_hypotheses)
+            cur_executed = num_executed
             for record in pool[:(beam_size - len(completed_hypotheses))]:
+                cur_score = record[1].score
+                exec_gain = sum([x >= cur_score.item() for x in all_scores_this_time])
+                num_executed = cur_executed + exec_gain
                 if record[0]:
+                    record[1].budget_when_reached = num_executed
                     completed_hypotheses.append(record[1])
                     if pl_debug and turning_point is None:
                         if not found_in_completed:
@@ -1092,6 +1104,8 @@ class Parser(nn.Module):
                 else:
                     new_hypotheses.append(record[1])
                     live_hyp_ids.append(record[2])
+            if len(pool) < num_slots:
+                num_executed = cur_executed + len(all_scores_this_time)
 
             if pl_debug:
                 if (turning_point is None) and (not found_in_completed):
@@ -1109,12 +1123,12 @@ class Parser(nn.Module):
                 t += 1
             else:
                 break
-
+        print('Final Num', len(completed_hypotheses), num_executed)
         completed_hypotheses.sort(key=lambda hyp: -hyp.score)
 
         if pl_debug:
             return completed_hypotheses, turning_point        
-        return completed_hypotheses
+        return DecodeResult(completed_hypotheses, num_executed)
 
     def save(self, path):
         dir_name = os.path.dirname(path)

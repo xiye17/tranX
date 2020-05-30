@@ -27,7 +27,6 @@ mkdir -p logs/streg
 echo commit hash: `git rev-parse HEAD` > logs/streg/${model_name}.log
 
 python -u exp.py \
-    --cuda \
     --seed ${seed} \
     --mode train \
     --batch_size ${batch_size} \

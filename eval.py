@@ -101,6 +101,7 @@ def eval_streg():
     test_set = Dataset.from_bin_file(sys.argv[1])
     # test_set.examples = test_set.examples[:200]
     decodes = pickle.load(open(sys.argv[2], "rb"))
+    decodes = [x.decodes for x in decodes]
     results = []
     acc = 0
     for idx, (pred_hyps, gt_exs) in enumerate(zip(decodes, test_set)):
@@ -114,7 +115,7 @@ def eval_streg():
             acc += 1
         print("{}----{}/{}".format(acc, idx, len(decodes)))
 
-    with open("report.txt", "w") as f:
+    with open("testi-first50-report.txt", "w") as f:
         for i, res in enumerate(results):
             line_fields = [str(i), str(res[0]), str(res[1])]
             line_fields.extend(["{},{}".format(x[0], x[1])
