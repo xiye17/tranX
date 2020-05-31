@@ -291,9 +291,15 @@ def batch_preverify_regex_with_exs(streg_asts, c_map, exs):
     with open(filename, "w") as f:
         f.write(pred_line + "\n")
         f.write(exs_line)
-    out = subprocess.check_output(
-        ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify_file',
-            filename], stderr=subprocess.DEVNULL)
+    try:
+        out = subprocess.check_output(
+            ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify_file',
+                filename], stderr=subprocess.DEVNULL, timeout=5)
+    except subprocess.TimeoutExpired as e:
+        print(e)
+        os.remove(filename)
+        return [True] * len(streg_asts)
+            
     os.remove(filename)
     out = out.decode("utf-8")
     out = out.rstrip().split(" ")

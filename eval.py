@@ -65,9 +65,14 @@ def external_evalute_single(gt_spec, preds, exs, flag_force=False):
                 filename, flag_str])
         os.remove(filename)
     else:
-        out = subprocess.check_output(
-            ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'evaluate_single',
-                pred_line, exs_line, gt_spec, flag_str])
+        try:
+            out = subprocess.check_output(
+                ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'evaluate_single',
+                    pred_line, exs_line, gt_spec, flag_str],timeout=20)
+        except subprocess.TimeoutExpired as e:
+            print(e)
+            return 'invalid', ['invalid']
+            
 
     
     out = out.decode("utf-8")
