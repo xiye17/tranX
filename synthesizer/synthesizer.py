@@ -158,6 +158,8 @@ class NoPruneSynthesizer:
 
         while num_exec_steps < self.max_running_step:
             # pick the top1 from worklist
+            if len(worklist) == 0:
+                break
             _, node = worklist.pop()
 
             explored_nodes.append(node)
