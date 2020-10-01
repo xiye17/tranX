@@ -1162,3 +1162,269 @@ class Parser(nn.Module):
         parser.eval()
 
         return parser
+
+    def continuations_of_hyp_for_synthesizer(self, hyp_pack, parser_state):
+        args = self.args
+        primitive_vocab = self.vocab.primitive
+        T = torch.cuda if args.cuda else torch
+
+        # if beyond :
+        # return []
+        # get new hyps, can assosicated with parser_state for new hyps
+        src_encodings, src_encodings_att_linear, zero_action_embed = parser_state
+        
+        in_hyp, meta = hyp_pack
+        hyp_state, hyp_score, att_tm1, h_tm1, t = meta
+        
+        if t >= args.decode_max_time_step:
+            return []
+
+        hypotheses = [in_hyp]
+        hyp_states = [hyp_state] 
+        # hyp_scores = [hyp_score]
+        hyp_scores = Variable(self.new_tensor([hyp_score]), volatile=True)
+
+    
+        # -------------- loop code ---------------
+
+        hyp_num = len(hypotheses)
+
+        # (hyp_num, src_sent_len, hidden_size * 2)
+        exp_src_encodings = src_encodings.expand(hyp_num, src_encodings.size(1), src_encodings.size(2))
+        # (hyp_num, src_sent_len, hidden_size)
+        exp_src_encodings_att_linear = src_encodings_att_linear.expand(hyp_num, src_encodings_att_linear.size(1), src_encodings_att_linear.size(2))
+
+    
+        if t == 0:
+            x = Variable(self.new_tensor(1, self.decoder_lstm.input_size).zero_(), volatile=True)
+            if args.no_parent_field_type_embed is False:
+                offset = args.action_embed_size  # prev_action
+                offset += args.att_vec_size * (not args.no_input_feed)
+                offset += args.action_embed_size * (not args.no_parent_production_embed)
+                offset += args.field_embed_size * (not args.no_parent_field_embed)
+
+                x[0, offset: offset + args.type_embed_size] = \
+                    self.type_embed.weight[self.grammar.type2id[self.grammar.root_type]]
+        else:
+            actions_tm1 = [hyp.actions[-1] for hyp in hypotheses]
+
+            a_tm1_embeds = []
+            for a_tm1 in actions_tm1:
+                if a_tm1:
+                    if isinstance(a_tm1, ApplyRuleAction):
+                        a_tm1_embed = self.production_embed.weight[self.grammar.prod2id[a_tm1.production]]
+                    elif isinstance(a_tm1, ReduceAction):
+                        a_tm1_embed = self.production_embed.weight[len(self.grammar)]
+                    else:
+                        a_tm1_embed = self.primitive_embed.weight[self.vocab.primitive[a_tm1.token]]
+
+                    a_tm1_embeds.append(a_tm1_embed)
+                else:
+                    a_tm1_embeds.append(zero_action_embed)
+            a_tm1_embeds = torch.stack(a_tm1_embeds)
+
+            inputs = [a_tm1_embeds]
+            if args.no_input_feed is False:
+                inputs.append(att_tm1)
+            if args.no_parent_production_embed is False:
+                # frontier production
+                frontier_prods = [hyp.frontier_node.production for hyp in hypotheses]
+                frontier_prod_embeds = self.production_embed(Variable(self.new_long_tensor(
+                    [self.grammar.prod2id[prod] for prod in frontier_prods])))
+                inputs.append(frontier_prod_embeds)
+            if args.no_parent_field_embed is False:
+                # frontier field
+                frontier_fields = [hyp.frontier_field.field for hyp in hypotheses]
+                frontier_field_embeds = self.field_embed(Variable(self.new_long_tensor([
+                    self.grammar.field2id[field] for field in frontier_fields])))
+
+                inputs.append(frontier_field_embeds)
+            if args.no_parent_field_type_embed is False:
+                # frontier field type
+                frontier_field_types = [hyp.frontier_field.type for hyp in hypotheses]
+                frontier_field_type_embeds = self.type_embed(Variable(self.new_long_tensor([
+                    self.grammar.type2id[type] for type in frontier_field_types])))
+                inputs.append(frontier_field_type_embeds)
+
+            # parent states
+            if args.no_parent_state is False:
+                p_ts = [hyp.frontier_node.created_time for hyp in hypotheses]
+                parent_states = torch.stack([hyp_states[hyp_id][p_t][0] for hyp_id, p_t in enumerate(p_ts)])
+                parent_cells = torch.stack([hyp_states[hyp_id][p_t][1] for hyp_id, p_t in enumerate(p_ts)])
+
+                if args.lstm == 'parent_feed':
+                    h_tm1 = (h_tm1[0], h_tm1[1], parent_states, parent_cells)
+                else:
+                    inputs.append(parent_states)
+
+            x = torch.cat(inputs, dim=-1)
+
+        (h_t, cell_t), att_t = self.step(x, h_tm1, exp_src_encodings,
+                                            exp_src_encodings_att_linear,
+                                            src_token_mask=None)
+
+        # Variable(batch_size, grammar_size)
+        # apply_rule_log_prob = torch.log(F.softmax(self.production_readout(att_t), dim=-1))
+        apply_rule_log_prob = F.log_softmax(self.production_readout(att_t), dim=-1)
+
+        # Variable(batch_size, primitive_vocab_size)
+        gen_from_vocab_prob = F.softmax(self.tgt_token_readout(att_t), dim=-1)
+
+        if args.no_copy:
+            primitive_prob = gen_from_vocab_prob
+        else:
+            raise RuntimeError('No NO_COPY')
+
+        gentoken_prev_hyp_ids = []
+        gentoken_new_hyp_unks = []
+        applyrule_new_hyp_scores = []
+        applyrule_new_hyp_prod_ids = []
+        applyrule_prev_hyp_ids = []
+
+        for hyp_id, hyp in enumerate(hypotheses):
+            # generate new continuations
+            action_types = self.transition_system.get_valid_continuation_types(hyp)
+
+            for action_type in action_types:
+                if action_type == ApplyRuleAction:
+                    productions = self.transition_system.get_valid_continuating_productions(hyp)
+                    for production in productions:
+                        prod_id = self.grammar.prod2id[production]
+                        prod_score = apply_rule_log_prob[hyp_id, prod_id].data.item()
+                        new_hyp_score = hyp.score + prod_score
+
+                        applyrule_new_hyp_scores.append(new_hyp_score)
+                        applyrule_new_hyp_prod_ids.append(prod_id)
+                        applyrule_prev_hyp_ids.append(hyp_id)
+                elif action_type == ReduceAction:
+                    action_score = apply_rule_log_prob[hyp_id, len(self.grammar)].data.item()
+                    new_hyp_score = hyp.score + action_score
+
+                    applyrule_new_hyp_scores.append(new_hyp_score)
+                    applyrule_new_hyp_prod_ids.append(len(self.grammar))
+                    applyrule_prev_hyp_ids.append(hyp_id)
+                else:
+                    # GenToken action
+                    gentoken_prev_hyp_ids.append(hyp_id)
+                    # hyp_copy_info = dict()  # of (token_pos, copy_prob)
+                    # hyp_unk_copy_info = []
+
+                    if args.no_copy is False:
+                        raise RuntimeError('No NO_COPY')
+
+                    # if args.no_copy is False and len(hyp_unk_copy_info) > 0:
+                    #     raise RuntimeError('No NO_COPY')
+
+        new_hyp_scores = None
+        if applyrule_new_hyp_scores:
+            new_hyp_scores = Variable(self.new_tensor(applyrule_new_hyp_scores))
+        if gentoken_prev_hyp_ids:
+            primitive_log_prob = torch.log(primitive_prob)
+            gen_token_new_hyp_scores = (hyp_scores[gentoken_prev_hyp_ids].unsqueeze(1) + primitive_log_prob[gentoken_prev_hyp_ids, :]).view(-1)
+
+            if new_hyp_scores is None: new_hyp_scores = gen_token_new_hyp_scores
+            else: new_hyp_scores = torch.cat([new_hyp_scores, gen_token_new_hyp_scores])
+
+        # top_new_hyp_scores, top_new_hyp_pos = torch.topk(new_hyp_scores,
+        #                                                     k=min(new_hyp_scores.size(0), beam_size - len(completed_hypotheses)))
+        
+        live_hyp_ids = []
+        new_hypotheses = []
+        for new_hyp_pos, new_hyp_score in enumerate(new_hyp_scores.data.cpu()):
+            action_info = ActionInfo()
+            if new_hyp_pos < len(applyrule_new_hyp_scores):
+                # it's an ApplyRule or Reduce action
+                prev_hyp_id = applyrule_prev_hyp_ids[new_hyp_pos]
+                prev_hyp = hypotheses[prev_hyp_id]
+
+                prod_id = applyrule_new_hyp_prod_ids[new_hyp_pos]
+                # ApplyRule action
+                if prod_id < len(self.grammar):
+                    production = self.grammar.id2prod[prod_id]
+                    action = ApplyRuleAction(production)
+                # Reduce action
+                else:
+                    action = ReduceAction()
+            else:
+                # it's a GenToken action
+                token_id = (new_hyp_pos - len(applyrule_new_hyp_scores)) % primitive_prob.size(1)
+
+                k = (new_hyp_pos - len(applyrule_new_hyp_scores)) // primitive_prob.size(1)
+                # try:
+                # copy_info = gentoken_copy_infos[k]
+                prev_hyp_id = gentoken_prev_hyp_ids[k]
+                prev_hyp = hypotheses[prev_hyp_id]
+
+
+                if token_id == primitive_vocab.unk_id:
+                    if gentoken_new_hyp_unks:
+                        token = gentoken_new_hyp_unks[k]
+                    else:
+                        token = primitive_vocab.id2word[primitive_vocab.unk_id]
+                else:
+                    token = primitive_vocab.id2word[token_id.item()]
+
+                action = GenTokenAction(token)
+
+            action_info.action = action
+            action_info.t = t
+            if t > 0:
+                action_info.parent_t = prev_hyp.frontier_node.created_time
+                action_info.frontier_prod = prev_hyp.frontier_node.production
+                action_info.frontier_field = prev_hyp.frontier_field.field
+
+
+            new_hyp = prev_hyp.clone_and_apply_action_info(action_info)
+            new_hyp.score = new_hyp_score
+
+            
+            new_hypotheses.append(new_hyp)
+            live_hyp_ids.append(prev_hyp_id)
+
+        
+        new_hyp_states = [hyp_states[i] + [(h_t[i], cell_t[i])] for i in live_hyp_ids]
+        h_tm1 = (h_t[live_hyp_ids], cell_t[live_hyp_ids])
+        att_tm1 = att_t[live_hyp_ids]
+        hypotheses = new_hypotheses
+        new_hyp_scores =[hyp.score for hyp in hypotheses]
+        t += 1
+
+        returned_packs = []
+        for i, (hp, hp_state, hp_score) in enumerate(zip(new_hypotheses, new_hyp_states, new_hyp_scores)):
+            if hp_score - in_hyp.score < -11:
+                continue
+            hp_meta = hp_state, hp_score, att_tm1[[i]], (h_tm1[0][[i]], h_tm1[1][[i]]), t
+            returned_packs.append((hp, hp_meta))
+        return returned_packs
+
+    def initialize_hyp_for_synthesizing(self, ex):
+        # return init hyp parser state
+        src_sent = ex.src_sent
+        args = self.args
+        primitive_vocab = self.vocab.primitive
+        T = torch.cuda if args.cuda else torch
+
+        src_sent_var = nn_utils.to_input_variable([src_sent], self.vocab.source, cuda=args.cuda, training=False)
+
+        # Variable(1, src_sent_len, hidden_size * 2)
+        src_encodings, (last_state, last_cell) = self.encode(src_sent_var, [len(src_sent)])
+        # (1, src_sent_len, hidden_size)
+        src_encodings_att_linear = self.att_src_linear(src_encodings)
+
+        dec_init_vec = self.init_decoder_state(last_state, last_cell)
+        if args.lstm == 'parent_feed':
+            h_tm1 = dec_init_vec[0], dec_init_vec[1], \
+                    Variable(self.new_tensor(args.hidden_size).zero_()), \
+                    Variable(self.new_tensor(args.hidden_size).zero_())
+        else:
+            h_tm1 = dec_init_vec
+
+        zero_action_embed = Variable(self.new_tensor(args.action_embed_size).zero_())
+        hyp = DecodeHypothesis()
+        hyp_state = []
+        parser_state = src_encodings, src_encodings_att_linear, zero_action_embed
+
+        # in_hyp, meta = hyp_pack
+        # hyp_state, hyp_score, att_tm1, h_tm1, t = meta
+        meta = (hyp_state, 0.0, None, h_tm1, 0)
+        return (hyp, meta), parser_state

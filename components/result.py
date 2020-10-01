@@ -5,3 +5,9 @@ class DecodeResult:
         self.decodes = programs
         self.num_exec = num_exec
         self.eval_result = eval_result
+
+class SynthResult:
+    def __init__(self, programs, num_exec, eval_result):
+        self.programs = programs
+        self.num_exec = num_exec
+        self.eval_result = eval_result

@@ -331,6 +331,75 @@ def pl_debug(args):
                 f.write("\t{:.2f} {}\n".format(p_hyp.score, partial_ast.debug_form()))
             f.write("\n")
 
+
+def easy_pickle_read(fname):
+    with open(fname, 'rb') as f:
+        return pickle.load(f)
+
+def easy_pickle_dump(obj, fname):
+    with open(fname, 'wb') as f:
+        pickle.dump(obj, f)
+
+from components.cache import *
+from components.result import *
+from synthesizer.synthesizer import NoPruneSynthesizer
+from eval import batch_filtering_test
+
+def synthesize(args):
+    test_set = Dataset.from_bin_file(args.test_file)
+    test_set.examples = test_set.examplesp[:5]
+    print(max([len(x.tgt_actions) for x in test_set]))
+    # exit()
+    assert args.load_model
+    print('load model from [%s]' % args.load_model, file=sys.stderr)
+    params = torch.load(args.load_model, map_location=lambda storage, loc: storage)
+    transition_system = params['transition_system']
+    saved_args = params['args']
+    saved_args.cuda = args.cuda
+    # set the correct domain from saved arg
+    args.lang = saved_args.lang
+
+    parser_cls = Registrable.by_name(args.parser)
+    parser = parser_cls.load(model_path=args.load_model, cuda=args.cuda)
+    parser.eval()
+
+    # test_set.examples = [test_set.examples[i] for i in poi]
+    parser.eval()
+    cache = SynthCache.from_file("misc/cache.pkl")
+
+    synthesizer = NoPruneSynthesizer(args, parser, score_func='prob')
+    # with torch.no_grad():
+    synth_results = []
+    budgets_used = []
+    for ex in tqdm(test_set, desc='Synthesize', file=sys.stdout, total=len(test_set)):
+        result, num_exec = synthesizer.solve(ex, cache=cache)
+        synth_results.append(result)
+        budgets_used.append(num_exec)
+    act_tree_to_ast = lambda x: parser.transition_system.build_ast_from_actions(x)
+    pred_codes = [[parser.transition_system.ast_to_surface_code(act_tree_to_ast(x.action_tree)) for x in preds] for preds in synth_results]
+    top_codes = [x[0] if x else "" for x in pred_codes]
+    match_results = [ " ".join(e.tgt_toks) == r for e, r in zip(test_set, top_codes)]
+    match_acc = sum(match_results) * 1. / len(match_results)
+
+    results = []
+    acc = 0
+    for pred_hyps, gt_exs in zip(pred_codes, test_set):
+        # top_pred = pred_hyps[0]
+        codes = [x.replace(" ", "") for x in pred_hyps]
+        gt_code = " ".join(gt_exs.tgt_toks).replace(" ", "")
+
+        match_result = batch_filtering_test(gt_code, codes, gt_exs.meta, flag_force=True)
+        results.append(match_result)
+        if match_result[0]:
+            acc += 1
+    cache.dump()
+    print("Eval Acc", match_acc)
+    print("Oracle Acc", acc * 1.0/len(test_set) )
+
+    eval_results = [SynthResult(progs, budget, result) for (progs, budget, result) in zip(synth_results, budgets_used, results)]
+    easy_pickle_dump(eval_results, args.eval_file)
+
+
 if __name__ == '__main__':
     arg_parser = init_arg_parser()
     args = init_config()
@@ -340,5 +409,7 @@ if __name__ == '__main__':
     elif args.mode == 'test':
         pl_test(args)
         # pl_debug(args)
+    elif args.mode == 'synth':
+        synthesize(args)
     else:
         raise RuntimeError('unknown mode')
