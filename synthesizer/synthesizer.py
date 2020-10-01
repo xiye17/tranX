@@ -65,15 +65,18 @@ class Timer:
         return time.time() - self.start
 
 class BasicPriorityQueue:
-    def __init__(self, max_size=10000):
+    def __init__(self, max_size=100):
         self.heap = []
         self.max_size = max_size
         # self.size = size
     
+    def __len__(self):
+        return len(self.heap)
+
     def push(self, item):
         heappush(self.heap, item)
         # consolidate
-        if len(self.heap) >= 2 * self.max_size:
+        # if len(self.heap) >= 2 * self.max_size:
             # print('consolidate')
             # sanity check
             # for i, (s0, h0) in enumerate(self.heap):
@@ -83,16 +86,24 @@ class BasicPriorityQueue:
             #             print(h0.action_tree)
             #             print(h1.action_tree)
 
-            new_heap = []
-            for _ in range(self.max_size):
-                heappush(new_heap, self.pop())
-            self.heap = new_heap
+            # new_heap = []
+            # for _ in range(self.max_size):
+            #     heappush(new_heap, self.pop())
+            # self.heap = new_heap
 
     def pop(self):
         return heappop(self.heap)
     
     def resort(self):
         heapify(self.heap)
+    
+    def compress(self):
+        if len(self.heap) > self.max_size:
+            new_heap = []
+            for _ in range(self.max_size):
+                heappush(new_heap, self.pop())
+            self.heap = new_heap
+
 
 
 class NoPruneSynthesizer:
@@ -156,8 +167,8 @@ class NoPruneSynthesizer:
             num_exec_steps += 1
             
             if prog.is_complete():
-                _, partial_ast = partial_asdl_ast_to_streg_ast(self.parser.transition_system.build_ast_from_actions(prog.action_tree))
-                print(num_exec_steps, partial_ast.debug_form())
+                _, partial_ast = partial_asdl_ast_to_streg_ast(prog.tree)
+                # print(num_exec_steps, partial_ast.debug_form())
                 num_actual_check += 1
                 num_enumerated_progs += 1
                 verify_result = preverify_regex_with_exs(partial_ast, example, cache=cache)
@@ -179,9 +190,10 @@ class NoPruneSynthesizer:
                 # this should use a mixed strategy
                 # key, continous
                 continuations = self.continuations_of_node(node, parser_state, num_exec_steps)
+                # print(num_exec_steps, len(worklist))
                 for c in continuations:
                     worklist.push(c)
-                # worklist.compress()
+                worklist.compress()
 
         print(len(result), 'budget used', num_exec_steps, 'actual check', num_actual_check, 'enum prog', num_enumerated_progs, 'time', timer.time())
         consolidate_tree(explored_nodes[0])
@@ -190,7 +202,7 @@ class NoPruneSynthesizer:
     def continuations_of_node(self, node, parser_state, exec_time):
         hyp = node.hypothesis
         meta = node.meta
-        progs = self.parser.continuations_of_hyp_for_synthesizer(hyp, meta, parser_state)
+        progs = self.parser.continuations_of_hyp_for_synthesizer((hyp, meta), parser_state)
         # rank siblings in the descending order of scores
         # progs.sort(key=lambda x: -x.score)
         

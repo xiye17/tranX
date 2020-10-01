@@ -344,10 +344,12 @@ from components.cache import *
 from components.result import *
 from synthesizer.synthesizer import NoPruneSynthesizer
 from eval import batch_filtering_test
+from tqdm import tqdm
+
 
 def synthesize(args):
     test_set = Dataset.from_bin_file(args.test_file)
-    test_set.examples = test_set.examplesp[:5]
+    test_set.examples = test_set.examples
     print(max([len(x.tgt_actions) for x in test_set]))
     # exit()
     assert args.load_model
@@ -376,9 +378,9 @@ def synthesize(args):
         synth_results.append(result)
         budgets_used.append(num_exec)
     act_tree_to_ast = lambda x: parser.transition_system.build_ast_from_actions(x)
-    pred_codes = [[parser.transition_system.ast_to_surface_code(act_tree_to_ast(x.action_tree)) for x in preds] for preds in synth_results]
+    pred_codes = [[parser.transition_system.ast_to_surface_code(x.tree) for x in preds] for preds in synth_results]
     top_codes = [x[0] if x else "" for x in pred_codes]
-    match_results = [ " ".join(e.tgt_toks) == r for e, r in zip(test_set, top_codes)]
+    match_results = [ e.tgt_code == r for e, r in zip(test_set, top_codes)]
     match_acc = sum(match_results) * 1. / len(match_results)
 
     results = []
@@ -386,7 +388,10 @@ def synthesize(args):
     for pred_hyps, gt_exs in zip(pred_codes, test_set):
         # top_pred = pred_hyps[0]
         codes = [x.replace(" ", "") for x in pred_hyps]
-        gt_code = " ".join(gt_exs.tgt_toks).replace(" ", "")
+        gt_code = gt_exs.tgt_code.replace(" ", "")
+        # print(codes)
+        # print(gt_code)
+        # exit()
 
         match_result = batch_filtering_test(gt_code, codes, gt_exs.meta, flag_force=True)
         results.append(match_result)
@@ -397,7 +402,7 @@ def synthesize(args):
     print("Oracle Acc", acc * 1.0/len(test_set) )
 
     eval_results = [SynthResult(progs, budget, result) for (progs, budget, result) in zip(synth_results, budgets_used, results)]
-    easy_pickle_dump(eval_results, args.eval_file)
+    easy_pickle_dump(eval_results, args.save_decode_to)
 
 
 if __name__ == '__main__':

@@ -103,6 +103,10 @@ class Hypothesis(object):
 
         return new_hyp
 
+    def is_complete(self):
+        return self.tree and self.frontier_field is None
+
+
     def copy(self):
         new_hyp = Hypothesis()
         if self.tree:

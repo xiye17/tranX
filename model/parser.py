@@ -1182,7 +1182,8 @@ class Parser(nn.Module):
         hypotheses = [in_hyp]
         hyp_states = [hyp_state] 
         # hyp_scores = [hyp_score]
-        hyp_scores = Variable(self.new_tensor([hyp_score]), volatile=True)
+        with torch.no_grad():
+            hyp_scores = self.new_tensor([hyp_score])
 
     
         # -------------- loop code ---------------
@@ -1196,7 +1197,8 @@ class Parser(nn.Module):
 
     
         if t == 0:
-            x = Variable(self.new_tensor(1, self.decoder_lstm.input_size).zero_(), volatile=True)
+            with torch.no_grad():
+                x = self.new_tensor(1, self.decoder_lstm.input_size).zero_()
             if args.no_parent_field_type_embed is False:
                 offset = args.action_embed_size  # prev_action
                 offset += args.att_vec_size * (not args.no_input_feed)
@@ -1362,7 +1364,8 @@ class Parser(nn.Module):
                     else:
                         token = primitive_vocab.id2word[primitive_vocab.unk_id]
                 else:
-                    token = primitive_vocab.id2word[token_id.item()]
+                    # token = primitive_vocab.id2word[token_id.item()]
+                    token = primitive_vocab.id2word[token_id]
 
                 action = GenTokenAction(token)
 
@@ -1391,7 +1394,7 @@ class Parser(nn.Module):
 
         returned_packs = []
         for i, (hp, hp_state, hp_score) in enumerate(zip(new_hypotheses, new_hyp_states, new_hyp_scores)):
-            if hp_score - in_hyp.score < -11:
+            if hp_score - in_hyp.score < -9.5:
                 continue
             hp_meta = hp_state, hp_score, att_tm1[[i]], (h_tm1[0][[i]], h_tm1[1][[i]]), t
             returned_packs.append((hp, hp_meta))

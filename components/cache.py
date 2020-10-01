@@ -27,8 +27,8 @@ class SynthCache:
             return cls(filename)
     
     def dump(self):
-        other = SynthCache.from_file(self.filename)
-        self.merge(other)
+        # other = SynthCache.from_file(self.filename)
+        # self.merge(other)
         with open(self.filename, 'wb') as f:
             pickle.dump(self, f)
 

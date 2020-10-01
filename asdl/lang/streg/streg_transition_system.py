@@ -252,9 +252,25 @@ def _partial_asdl_ast_to_streg_ast(asdl_ast):
     else:
         raise ValueError("wrong ast rule", rule)
 
-def preverify_regex_with_exs(streg_ast, c_map, exs):
-    # pred_line = " ".join(preds)
 
+def preverify_regex_with_exs(streg_ast, example, cache=None):
+    if cache is None:
+        return _preverify_regex_with_exs(streg_ast, example)
+    
+    prob_id = example.meta['worker_info']['id']
+    rep = _inverse_regex_with_map(streg_ast.debug_form(), example.meta['const_map']) 
+    r = cache.query(prob_id, rep)
+    if r is None:
+        exec_r = _preverify_regex_with_exs(streg_ast, example)
+        cache.write(prob_id, rep, exec_r)
+        return exec_r
+    else:
+        return r
+
+def _preverify_regex_with_exs(streg_ast, example):
+    # pred_line = " ".join(preds)
+    c_map =  example.meta['const_map']
+    exs = example.meta['str_exs']
     over_approx = _get_approx(streg_ast, True)
     over_approx = _inverse_regex_with_map(over_approx, c_map)
     under_approx = _get_approx(streg_ast, False)
@@ -267,14 +283,44 @@ def preverify_regex_with_exs(streg_ast, c_map, exs):
     if "const" in pred_line:
         return False
 
-    out = subprocess.check_output(
-        ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify',
-            pred_line, exs_line])
+    try:
+        out = subprocess.check_output(
+            ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify',
+                pred_line, exs_line], stderr=subprocess.DEVNULL, timeout=5)
+    except subprocess.TimeoutExpired as e:
+        return False
+
     # stderr=subprocess.DEVNULL    
     out = out.decode("utf-8")
     out = out.rstrip()
     # print(streg_ast.debug_form())
     return out == "true"
+
+# def preverify_regex_with_exs(streg_ast, c_map, exs):
+#     # pred_line = " ".join(preds)
+
+#     over_approx = _get_approx(streg_ast, True)
+#     over_approx = _inverse_regex_with_map(over_approx, c_map)
+#     under_approx = _get_approx(streg_ast, False)
+#     under_approx = _inverse_regex_with_map(under_approx, c_map)
+#     pred_line = "{} {}".format(over_approx, under_approx)
+#     exs_line = " ".join(["{},{}".format(x[0], x[1]) for x in exs])
+
+#     if "none" in pred_line:
+#         return False
+#     if "const" in pred_line:
+#         return False
+
+#     out = subprocess.check_output(
+#         ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify',
+#             pred_line, exs_line])
+#     # stderr=subprocess.DEVNULL    
+#     out = out.decode("utf-8")
+#     out = out.rstrip()
+#     # print(streg_ast.debug_form())
+#     return out == "true"
+
+
 
 
 def batch_preverify_regex_with_exs(streg_asts, c_map, exs):
