@@ -114,7 +114,7 @@ class NoPruneSynthesizer:
         self.args = args
         self.parser = parser
         self.order = args.search_order
-        self.max_running_step = 2500
+        self.max_running_step = 5000
         self.score_func = score_func
 
     def solve(self, example, cache=None):

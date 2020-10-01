@@ -371,12 +371,34 @@ def synthesize(args):
 
     synthesizer = NoPruneSynthesizer(args, parser, score_func='prob')
     # with torch.no_grad():
+
+    base_results = easy_pickle_read(args.base_results)
+
     synth_results = []
     budgets_used = []
+    
+    ex_idx = 0
+    
+    final_synth_results = []
+    to_fill_idx = []
     for ex in tqdm(test_set, desc='Synthesize', file=sys.stdout, total=len(test_set)):
+        base_res = base_results[ex_idx]
+        if len(base_res.programs):
+            print('found', ex_idx)
+            final_synth_results.append(base_res)
+            ex_idx += 1
+            continue
+        else:
+            print('to test', ex_idx)
+            final_synth_results.append(None)
+            to_fill_idx.append(ex_idx)
+            ex_idx += 1
         result, num_exec = synthesizer.solve(ex, cache=cache)
         synth_results.append(result)
         budgets_used.append(num_exec)
+    
+    # reduce test set
+    test_set.examples = [test_set.examples[i] for i in to_fill_idx]
     act_tree_to_ast = lambda x: parser.transition_system.build_ast_from_actions(x)
     pred_codes = [[parser.transition_system.ast_to_surface_code(x.tree) for x in preds] for preds in synth_results]
     top_codes = [x[0] if x else "" for x in pred_codes]
@@ -402,7 +424,10 @@ def synthesize(args):
     print("Oracle Acc", acc * 1.0/len(test_set) )
 
     eval_results = [SynthResult(progs, budget, result) for (progs, budget, result) in zip(synth_results, budgets_used, results)]
-    easy_pickle_dump(eval_results, args.save_decode_to)
+    assert len(to_fill_idx) == len(eval_results)
+    for to_id, new_eval in zip(to_fill_idx, eval_results):
+        final_synth_results[to_id] = new_eval
+    easy_pickle_dump(final_synth_results, args.save_decode_to)
 
 
 if __name__ == '__main__':

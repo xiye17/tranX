@@ -133,6 +133,8 @@ def init_arg_parser():
     arg_parser.add_argument('--sample_size', default=5, type=int, help='Sample size')
     arg_parser.add_argument('--test_file', type=str, help='Path to the test file')
     arg_parser.add_argument('--save_decode_to', default=None, type=str, help='Save decoding results to file')
+    arg_parser.add_argument('--base_results', default=None, type=str, help='Base results')
+    # arg_parser.add_argument('--budget', default=2500, type=int, help='Sample size')
 
     #### dataset specific config ####
     arg_parser.add_argument('--sql_db_file', default=None, type=str, help='path to WikiSQL database file for evaluation (SQLite)')
