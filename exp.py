@@ -249,6 +249,7 @@ def test(args):
 
 def pl_test(args):
     test_set = Dataset.from_bin_file(args.test_file)
+    test_set.examples = test_set.examples
     print(max([len(x.tgt_actions) for x in test_set]))
     # exit()
     assert args.load_model
@@ -264,8 +265,10 @@ def pl_test(args):
     parser = parser_cls.load(model_path=args.load_model, cuda=args.cuda)
     parser.eval()
     evaluator = Registrable.by_name(args.evaluator)(transition_system, args=args)
+    init_backend()
     eval_results, decode_results = evaluation.pl_evaluate(test_set.examples, parser, evaluator, args,
                                                        verbose=args.verbose, return_decode_result=True)
+    exit_backend()
     print(eval_results, file=sys.stderr)
     if args.save_decode_to:
         pickle.dump(decode_results, open(args.save_decode_to, 'wb'))
@@ -346,7 +349,7 @@ from synthesizer.synthesizer import NoPruneSynthesizer
 from eval import batch_filtering_test
 from tqdm import tqdm
 
-
+from asdl.lang.streg.streg_transition_system import init_backend, exit_backend 
 def synthesize(args):
     test_set = Dataset.from_bin_file(args.test_file)
     test_set.examples = test_set.examples
@@ -368,15 +371,17 @@ def synthesize(args):
     # test_set.examples = [test_set.examples[i] for i in poi]
     parser.eval()
     cache = SynthCache.from_file("misc/cache.pkl")
-
+    # cache = Nones
     synthesizer = NoPruneSynthesizer(args, parser, score_func='prob')
     # with torch.no_grad():
     synth_results = []
     budgets_used = []
+    init_backend()
     for ex in tqdm(test_set, desc='Synthesize', file=sys.stdout, total=len(test_set)):
         result, num_exec = synthesizer.solve(ex, cache=cache)
         synth_results.append(result)
         budgets_used.append(num_exec)
+    exit_backend()
     act_tree_to_ast = lambda x: parser.transition_system.build_ast_from_actions(x)
     pred_codes = [[parser.transition_system.ast_to_surface_code(x.tree) for x in preds] for preds in synth_results]
     top_codes = [x[0] if x else "" for x in pred_codes]

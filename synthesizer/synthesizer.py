@@ -65,7 +65,7 @@ class Timer:
         return time.time() - self.start
 
 class BasicPriorityQueue:
-    def __init__(self, max_size=100):
+    def __init__(self, max_size=10000):
         self.heap = []
         self.max_size = max_size
         # self.size = size
@@ -98,13 +98,12 @@ class BasicPriorityQueue:
         heapify(self.heap)
     
     def compress(self):
-        if len(self.heap) > self.max_size:
+        if len(self.heap) > 10 * self.max_size:
             new_heap = []
+            print('Compres happen')
             for _ in range(self.max_size):
                 heappush(new_heap, self.pop())
             self.heap = new_heap
-
-
 
 class NoPruneSynthesizer:
     def __init__(self, args, parser, score_func='prob'):
@@ -114,7 +113,7 @@ class NoPruneSynthesizer:
         self.args = args
         self.parser = parser
         self.order = args.search_order
-        self.max_running_step = 2500
+        self.max_running_step = 5000
         self.score_func = score_func
 
     def solve(self, example, cache=None):

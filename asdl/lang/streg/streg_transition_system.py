@@ -15,6 +15,8 @@ import subprocess
 from os.path import join
 import os
 import random
+import io
+from select import select
 
 """
 # define primitive fields
@@ -53,6 +55,40 @@ _NODE_CLASS_TO_RULE = {
     "repeatrange": "RepeatRange",
     "const": "String"
 }
+
+
+class DatagenBackend:
+    proc = None
+    stdin = None
+    stdout = None
+    stderr = None
+
+def init_backend():
+    DatagenBackend.proc = subprocess.Popen(
+        ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify_server'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    DatagenBackend.stdin = io.TextIOWrapper(DatagenBackend.proc.stdin,line_buffering=True)
+    DatagenBackend.stdout = io.TextIOWrapper(DatagenBackend.proc.stdout)
+    DatagenBackend.stderr = io.TextIOWrapper(DatagenBackend.proc.stderr)
+
+def restart_backend():
+    print('Restarting Backends')
+    if DatagenBackend.proc is not None:
+        if DatagenBackend.proc.poll() is None:
+            DatagenBackend.proc.kill()
+    init_backend()
+
+def exit_backend():
+    print('Exiting Backends')
+    if DatagenBackend.proc is not None:
+        if DatagenBackend.proc.poll() is None:
+            DatagenBackend.proc.kill()
+    DatagenBackend.proc.kill()
+
 
 def streg_ast_to_asdl_ast(grammar, reg_ast):
     if reg_ast.children:
@@ -280,19 +316,31 @@ def _preverify_regex_with_exs(streg_ast, example):
 
     if "none" in pred_line:
         return False
-    if "const" in pred_line:
-        return False
+    #if "const" in pred_line:
+    #    return False
 
     try:
-        out = subprocess.check_output(
-            ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify',
-                pred_line, exs_line], stderr=subprocess.DEVNULL, timeout=5)
-    except subprocess.TimeoutExpired as e:
-        return False
+        # out,err = c.proc.communicate("{}\t{}".format(pred_line, exs_line).encode("utf-8"), timeout=2)
+        DatagenBackend.stdin.write("{}\t{}\n".format(pred_line, exs_line))
+        r_list, _, _ = select([DatagenBackend.stdout], [], [], 0.5)
+        if r_list:        
+            out = DatagenBackend.stdout.readline()
+        else:
+            print('Timeout Hit')
+            restart_backend()
+            return False
+        # print('Read error', err.rstrip())
+    except Exception as e:
+        print('Exception found')
+        # err = DatagenBackend.stderr.read()
+        # print(err)
+        print(e)
+        raise e
 
     # stderr=subprocess.DEVNULL    
-    out = out.decode("utf-8")
+    # out = out.decode("utf-8")
     out = out.rstrip()
+    # print('Out captured', out)
     # print(streg_ast.debug_form())
     return out == "true"
 
@@ -321,35 +369,74 @@ def _preverify_regex_with_exs(streg_ast, example):
 #     return out == "true"
 
 
-
-
-def batch_preverify_regex_with_exs(streg_asts, c_map, exs):
+def _bat_preverify_regex_with_exs(streg_ast, c_map, exs):
     # pred_line = " ".join(preds)
-
-    over_approx = [_inverse_regex_with_map(_get_approx(x, True), c_map) for x in streg_asts]
-    under_approx = [_inverse_regex_with_map(_get_approx(x, False), c_map) for x in streg_asts]
-    pred_line = "\t".join(["{} {}".format(o, u) for (o, u) in zip(over_approx, under_approx)])
+    over_approx = _get_approx(streg_ast, True)
+    over_approx = _inverse_regex_with_map(over_approx, c_map)
+    under_approx = _get_approx(streg_ast, False)
+    under_approx = _inverse_regex_with_map(under_approx, c_map)
+    pred_line = "{} {}".format(over_approx, under_approx)
     exs_line = " ".join(["{},{}".format(x[0], x[1]) for x in exs])
 
+    if "none" in pred_line:
+        return False
+    #if "const" in pred_line:
+    #    return False
 
-    filename = join("./external/", str(random.random()) + ".in")
-    # print(pred_line)
-    with open(filename, "w") as f:
-        f.write(pred_line + "\n")
-        f.write(exs_line)
     try:
-        out = subprocess.check_output(
-            ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify_file',
-                filename], stderr=subprocess.DEVNULL, timeout=5)
-    except subprocess.TimeoutExpired as e:
+        # out,err = c.proc.communicate("{}\t{}".format(pred_line, exs_line).encode("utf-8"), timeout=2)
+        DatagenBackend.stdin.write("{}\t{}\n".format(pred_line, exs_line))
+        r_list, _, _ = select([DatagenBackend.stdout], [], [], 0.5)
+        if r_list:        
+            out = DatagenBackend.stdout.readline()
+        else:
+            print('Timeout Hit')
+            restart_backend()
+            return False
+        # print('Read error', err.rstrip())
+    except Exception as e:
+        print('Exception found')
+        # err = DatagenBackend.stderr.read()
+        # print(err)
         print(e)
-        os.remove(filename)
-        return [True] * len(streg_asts)
+        raise e
+
+    # stderr=subprocess.DEVNULL    
+    # out = out.decode("utf-8")
+    out = out.rstrip()
+    # print(streg_ast.debug_form())
+    return out == "true"
+
+def batch_preverify_regex_with_exs(streg_asts, c_map, exs):
+    return [_bat_preverify_regex_with_exs(x, c_map, exs) for x in streg_asts]
+
+# def batch_preverify_regex_with_exs(streg_asts, c_map, exs):
+#     # pred_line = " ".join(preds)
+
+#     over_approx = [_inverse_regex_with_map(_get_approx(x, True), c_map) for x in streg_asts]
+#     under_approx = [_inverse_regex_with_map(_get_approx(x, False), c_map) for x in streg_asts]
+#     pred_line = "\t".join(["{} {}".format(o, u) for (o, u) in zip(over_approx, under_approx)])
+#     exs_line = " ".join(["{},{}".format(x[0], x[1]) for x in exs])
+
+
+#     filename = join("./external/", str(random.random()) + ".in")
+#     # print(pred_line)
+#     with open(filename, "w") as f:
+#         f.write(pred_line + "\n")
+#         f.write(exs_line)
+#     try:
+#         out = subprocess.check_output(
+#             ['java', '-cp', './external/datagen.jar:./external/lib/*', '-ea', 'datagen.Main', 'preverify_file',
+#                 filename], stderr=subprocess.DEVNULL, timeout=5)
+#     except subprocess.TimeoutExpired as e:
+#         print(e)
+#         os.remove(filename)
+#         return [True] * len(streg_asts)
             
-    os.remove(filename)
-    out = out.decode("utf-8")
-    out = out.rstrip().split(" ")
-    return [x == "true" for x in out]
+#     os.remove(filename)
+#     out = out.decode("utf-8")
+#     out = out.rstrip().split(" ")
+#     return [x == "true" for x in out]
 
 # fill True -> full False: empty
 def _get_approx(node, fill):
